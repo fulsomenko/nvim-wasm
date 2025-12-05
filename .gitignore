@@ -1,0 +1,5 @@
+.toolchains/
+build-wasm/
+build-wasm-deps/
+CopyOfCMakeCache.txt
+.DS_Store

@@ -1,0 +1,77 @@
+--- src/constants.c	2024-01-01
++++ src/constants.c	2024-01-02
+@@
+-#include "luv.h"
++#include "luv.h"
++#include <netdb.h>
++
++#define LUV_WASI 1
++
++static struct protoent* getprotobyname(const char* name) {
++  (void)name;
++  return NULL;
++}
++
++static struct protoent* getprotobynumber(int num) {
++  (void)num;
++  return NULL;
++}
+@@
+   lua_pop(L, 1);
+   proto = getprotobyname(string);
++  if (proto == NULL) {
++    lua_pop(L, 1);
++    return -1;
++  }
+   lua_pushinteger(L, proto->p_proto);
+   lua_setfield(L, -2, string);
+   lua_pop(L, 1);
+   return proto->p_proto;
+@@
+   lua_pop(L, 1);
+   proto = getprotobynumber(num);
++  if (proto == NULL) {
++    lua_pop(L, 1);
++    return NULL;
++  }
+   lua_pushstring(L, proto->p_name);
+   lua_rawseti(L, -2, num);
+   lua_pop(L, 1);
+   return proto->p_name;
+--- src/misc.c	2024-01-01
++++ src/misc.c	2024-01-02
+@@
+ #ifndef _WIN32
+ static int luv_getuid(lua_State* L){
+-  int uid = getuid();
+-  lua_pushinteger(L, uid);
+-  return 1;
++  return luv_error(L, UV_ENOSYS);
+ }
+@@
+ static int luv_getgid(lua_State* L){
+-  int gid = getgid();
+-  lua_pushinteger(L, gid);
+-  return 1;
++  return luv_error(L, UV_ENOSYS);
+ }
+@@
+ static int luv_setuid(lua_State* L){
+-  int uid = luaL_checkinteger(L, 1);
+-  int r = setuid(uid);
+-  if (-1 == r) {
+-    luaL_error(L, "Error setting UID");
+-  }
+-  return 0;
++  return luv_error(L, UV_ENOSYS);
+ }
+@@
+ static int luv_setgid(lua_State* L){
+-  int gid = luaL_checkinteger(L, 1);
+-  int r = setgid(gid);
+-  if (-1 == r) {
+-    luaL_error(L, "Error setting GID");
+-  }
+-  return 0;
++  return luv_error(L, UV_ENOSYS);
+ }

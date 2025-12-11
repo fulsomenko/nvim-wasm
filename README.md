@@ -2,7 +2,9 @@
 
 This repository is a build wrapper that produces a WebAssembly (WASI) binary of the Neovim submodule without modifying Neovim itself. All WASI-specific shims and patches live outside the submodule.
 
-Try Demo: https://nvim-wasm.pages.dev/
+Try Demo: https://nvim-wasm.pages.dev
+
+https://github.com/user-attachments/assets/524ccf71-1cc4-4b65-aea1-e3f6c893263e
 
 ## Layout
 - `neovim/` – upstream Neovim submodule (kept clean).

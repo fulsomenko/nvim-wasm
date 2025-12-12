@@ -17,7 +17,6 @@ let worker = null;
 let ring = null;
 let reqId = 1;
 let bufHandle = null; // numeric buffer id
-let suppressRemote = false;
 let pending = new Map();
 let primeSent = false;
 let lastCursorStyle = null;
@@ -28,6 +27,8 @@ let typicalFullWidth = 2;
 let cursorRefreshInFlight = false;
 let cursorRefreshPending = false;
 let cursorRefreshTimer = null;
+let lastCursorPos = null;
+let suppressCursorSync = false;
 
 const monacoReady = loadMonaco();
 
@@ -163,6 +164,15 @@ function createEditor() {
     const { lineNumber, column } = ev.target.position;
     sendRpc("nvim_win_set_cursor", [0, [lineNumber, column]]);
   });
+
+  editor.onDidChangeCursorPosition((ev) => {
+    if (suppressCursorSync || !lastCursorPos) return;
+    if (ev.source === "keyboard") {
+      suppressCursorSync = true;
+      editor.setPosition(lastCursorPos);
+      suppressCursorSync = false;
+    }
+  });
 }
 
 function sendInput(keys) {
@@ -261,9 +271,7 @@ function applyBuffer(lines = [""]) {
   if (!editor) return;
   const current = editor.getModel().getValue();
   const joined = (lines && lines.length ? lines : [""]).join("\n");
-  suppressRemote = true;
   editor.getModel().setValue(joined);
-  suppressRemote = false;
 }
 
 function translateKey(ev) {
@@ -320,11 +328,14 @@ function updateCursor(line, col) {
   const cl = pos.col;
   cursorEl.textContent = `cursor: ${ln}:${cl}`;
   const monacoPos = { lineNumber: ln, column: cl };
+  lastCursorPos = monacoPos;
   const current = editor.getPosition();
   const same = current && current.lineNumber === ln && current.column === cl;
   if (!same) {
+    suppressCursorSync = true;
     editor.setPosition(monacoPos);
     editor.revealPositionInCenterIfOutsideViewport(monacoPos);
+    suppressCursorSync = false;
   }
 }
 
@@ -455,15 +466,19 @@ function scheduleCursorRefresh() {
 }
 
 function clampCursor(ln, col0) {
+  const fallbackLine = Math.max(1, Number(ln) || 1);
+  const fallbackCol = Math.max(1, (Number(col0) || 0) + 1);
   const model = editor?.getModel();
   if (!model) {
-    return { line: Math.max(1, Number(ln) || 1), col: Math.max(1, Number(col0) || 1) };
+    return { line: fallbackLine, col: fallbackCol };
   }
   const lineCount = model.getLineCount();
-  const line = clamp(Math.max(1, Number(ln) || 1), 1, lineCount);
+  const line = clamp(fallbackLine, 1, lineCount);
   const text = model.getLineContent(line) ?? "";
-  const maxCol0 = Math.max(0, text.length);
-  const col = clamp(Number(col0) || 0, 0, maxCol0) + 1; // convert to 1-based for Monaco
+  const maxColumn = model.getLineMaxColumn(line);
+  const byteCol = Math.max(0, Number(col0) || 0);
+  const charIndex = byteIndexToCharIndex(text, byteCol);
+  const col = clamp(charIndex + 1, 1, maxColumn);
   return { line, col };
 }
 
@@ -512,6 +527,31 @@ function applyCursorStyle(mode) {
   lastCursorStyle = style;
   lastCursorBlink = blink;
   lastCursorWidth = width;
+}
+
+function byteIndexToCharIndex(text, byteIndex) {
+  let totalBytes = 0;
+  let charIndex = 0;
+  const target = Math.max(0, Number(byteIndex) || 0);
+  while (totalBytes < target) {
+    if (charIndex >= text.length) {
+      return charIndex + (target - totalBytes);
+    }
+    const code = text.codePointAt(charIndex);
+    const bytes = utf8ByteLength(code);
+    totalBytes += bytes;
+    charIndex += bytes === 4 ? 2 : 1;
+  }
+  return charIndex;
+}
+
+function utf8ByteLength(point) {
+  if (point == null) return 0;
+  if (point <= 0x7f) return 1;
+  if (point <= 0x7ff) return 2;
+  if (point >= 0xd800 && point <= 0xdfff) return 4; // surrogate pair uses two UTF-16 code units
+  if (point < 0xffff) return 3;
+  return 4;
 }
 
 init();

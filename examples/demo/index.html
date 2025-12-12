@@ -29,6 +29,9 @@
       const statusEl = document.getElementById("status");
       const gridEl = document.getElementById("grid");
       const modeEl = document.getElementById("mode");
+      const gridStyles = window.getComputedStyle(gridEl);
+      const fallbackFg = gridStyles.color || "#dfe5f1";
+      const fallbackBg = gridStyles.backgroundColor || "#050912";
       const WORKER_VERSION = "v1";
       const cols = 96;
       const rows = 32;
@@ -36,6 +39,7 @@
       let ring = null;
       let reqId = 0;
       let primeSent = false;
+      let lastClipboard = "";
 
       class SharedInputWriter {
         constructor(capacity = 262144) {
@@ -61,7 +65,7 @@
         }
       }
 
-      gridEl.addEventListener("click", () => gridEl.focus());
+      gridEl.addEventListener("click", () => { gridEl.focus(); warmupClipboard(); });
       gridEl.addEventListener("keydown", (ev) => {
         const keys = translateKey(ev);
         if (!keys) return;
@@ -74,6 +78,7 @@
           setStatus("Serve with COOP/COEP so SharedArrayBuffer works", true);
           return;
         }
+        warmupClipboard();
         stopSession();
         ring = new SharedInputWriter();
         reqId = 0;
@@ -94,6 +99,30 @@
         sendRpc("nvim_command", ["set noswapfile"]);
         sendRpc("nvim_command", ["set number"]);
         sendRpc("nvim_command", ["set fillchars=eob:~"]);
+        const clipboardLua = `
+          local function setup_clipboard()
+            local ui_chan = (vim.api.nvim_get_api_info() or {})[1]
+            if not ui_chan then return end
+            local function copy(lines, regtype)
+              vim.rpcnotify(ui_chan, 'wasm-clipboard-copy', lines, regtype)
+            end
+            local function paste()
+              local ok, res = pcall(vim.rpcrequest, ui_chan, 'wasm-clipboard-paste')
+              if not ok then return {}, 'v' end
+              local lines = res and res[1] or {}
+              local regtype = res and res[2] or 'v'
+              return lines, regtype
+            end
+            vim.g.clipboard = {
+              name = 'wasm',
+              copy = { ['+'] = copy, ['*'] = copy },
+              paste = { ['+'] = paste, ['*'] = paste },
+            }
+            vim.cmd('set clipboard=unnamedplus')
+          end
+          setup_clipboard()
+        `;
+        sendRpc("nvim_exec_lua", [clipboardLua, []]);
         // Force demo buffer content after attach so the grid isn't blank.
         const lua = `
           local lines = ...
@@ -125,6 +154,12 @@
         ring.push(msg);
       }
 
+      function sendRpcResponse(msgid, error, result) {
+        if (!ring) return;
+        const msg = encode([1, msgid, error, result]);
+        ring.push(msg);
+      }
+
       function sendInput(keys) { sendRpc("nvim_input", [keys]); }
 
       function handleWorkerMessage(event) {
@@ -134,6 +169,14 @@
           renderGrid(cells, event.data.cursor, event.data.cursorHlId, event.data.mode, event.data.hls);
         } else if (type === "exit") {
           setStatus(`nvim exited (${event.data.code})`, event.data.code !== 0);
+        } else if (type === "clipboard-copy") {
+          const text = (event.data.lines || []).join("\n");
+          if (!navigator.clipboard?.writeText) return;
+          lastClipboard = text;
+          navigator.clipboard.writeText(text).catch(() => { lastClipboard = text; });
+        } else if (type === "clipboard-paste") {
+          const req = event.data.requestId;
+          doClipboardPaste(req);
         }
       }
 
@@ -181,8 +224,13 @@
         let fg = attr.foreground;
         let bg = attr.background;
         if (attr.reverse) {
-          fg = attr.background;
-          bg = attr.foreground;
+          const tmpBg = bg || fallbackBg;
+          const tmpFg = fg || fallbackFg;
+          fg = tmpBg;
+          bg = tmpFg;
+        } else {
+          if (!fg) fg = fallbackFg;
+          if (!bg) bg = null;
         }
         const parts = [];
         if (fg) parts.push(`color:${fg}`);
@@ -193,7 +241,10 @@
       function getHl(map, id, isCursor) {
         const key = id != null && map[id] !== undefined ? id : String(id);
         const hl = (key != null && map[key] !== undefined ? map[key] : null) || map[0] || map["0"] || null;
-        if (!hl) return null;
+        if (!hl) {
+          if (isCursor) return { foreground: fallbackFg, background: fallbackBg, reverse: true };
+          return null;
+        }
         const reverse = Boolean(hl.reverse) || (isCursor && Number(id) === 0);
         return { foreground: hl.foreground, background: hl.background, reverse };
       }
@@ -211,6 +262,45 @@
       function linesToCells(lines = []) {
         const data = lines && lines.length ? lines : [""];
         return data.map((line) => Array.from(line || "").map((ch) => ({ ch, hl: 0 })));
+      }
+
+      function warmupClipboard() {
+        if (!navigator.clipboard?.readText) return;
+        navigator.clipboard.readText().then((txt) => { if (txt) lastClipboard = txt; }).catch(() => {});
+      }
+
+      function doClipboardPaste(req) {
+        const fallback = () => {
+          if (lastClipboard !== "") {
+            sendRpcResponse(req, null, [lastClipboard.split(/\r?\n/), "v"]);
+            return true;
+          }
+          const manual = window.prompt("Paste text");
+          if (manual !== null) {
+            lastClipboard = manual;
+            sendRpcResponse(req, null, [manual.split(/\r?\n/), "v"]);
+            return true;
+          }
+          sendRpcResponse(req, null, [[""], "v"]);
+          return true;
+        };
+
+        if (!navigator.clipboard?.readText) {
+          fallback();
+          return;
+        }
+        navigator.clipboard.readText()
+          .then((text) => {
+            const effective = text || lastClipboard;
+            if (!effective) { fallback(); return; }
+            lastClipboard = effective;
+            const lines = effective.split(/\r?\n/);
+            sendRpcResponse(req, null, [lines, "v"]);
+          })
+          .catch((err) => {
+            console.warn("clipboard read failed", err);
+            fallback();
+          });
       }
 
       function setStatus(text, error = false) { statusEl.textContent = text; statusEl.style.color = error ? "#ff9ea2" : "#e8edf5"; }

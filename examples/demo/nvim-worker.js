@@ -162,10 +162,19 @@ function handleStdout(chunk) {
 function handleMessage(msg) {
   if (!Array.isArray(msg) || msg.length < 1) return;
   const kind = msg[0];
-  if (kind === 2) {
+  if (kind === 0) {
+    const [, msgid, method, params] = msg;
+    if (method === "wasm-clipboard-paste") {
+      postMessage({ type: "clipboard-paste", requestId: msgid });
+    }
+  } else if (kind === 2) {
     const [, method, params] = msg;
     if (method === "redraw") {
       handleRedraw(params || []);
+    } else if (method === "wasm-clipboard-copy") {
+      const lines = Array.isArray(params?.[0]) ? params[0] : [];
+      const regtype = typeof params?.[1] === "string" ? params[1] : "v";
+      postMessage({ type: "clipboard-copy", lines, regtype });
     }
   }
 }

@@ -1,0 +1,1 @@
+Neovim-on-WASM with a Monaco frontend. Neovim runs headless in a Worker (WASI) and exposes msgpack RPC over a SharedArrayBuffer-backed ring; key input goes to Neovim, and buffer/cursor state is mirrored into Monaco via buffer events (similar to vscode-neovim’s architecture).

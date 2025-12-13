@@ -1,0 +1,1 @@
+Minimal Neovim-on-WASM demo. Neovim runs in a Web Worker (WASI), and the main thread attaches with `nvim_ui_attach` (linegrid) to draw the grid in the DOM. Keystrokes go through a SharedArrayBuffer ring to Neovim; UI events and cursor/mode state come back via msgpack-RPC and are rendered in the page.

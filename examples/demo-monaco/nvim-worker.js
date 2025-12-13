@@ -176,9 +176,8 @@ function handleMessage(msg) {
       const lines = Array.isArray(params?.[0]) ? params[0] : [];
       const regtype = typeof params?.[1] === "string" ? params[1] : "v";
       postMessage({ type: "clipboard-copy", lines, regtype });
-    } else if (method === "redraw") {
-      postMessage({ type: "redraw", events: params || [] });
-    } else {
+    } else if (method === "nvim_buf_lines_event" || method === "nvim_buf_detach_event") {
+      // Limit forwarded notifications to the ones the UI actually consumes to cut unnecessary work.
       postMessage({ type: "rpc-notify", method, params });
     }
   }

@@ -2,6 +2,15 @@
 
 Headless Neovim in a Worker (WASI) with Monaco rendering the buffer and cursor.
 
+## Demo
+Try it: https://nvim-wasm-monaco.pages.dev/
+
+
+
+https://github.com/user-attachments/assets/bab80837-3a7d-4519-8a4f-249f41f2729e
+
+
+
 ## How it works
 - Neovim runs headless and speaks msgpack-RPC over a SharedArrayBuffer ring.
 - Buffer and cursor state are mirrored into Monaco from Neovim buffer events (vscode-neovim style).

@@ -6,57 +6,51 @@ Try Demo: https://nvim-wasm.pages.dev
 
 https://github.com/user-attachments/assets/524ccf71-1cc4-4b65-aea1-e3f6c893263e
 
-## Layout
-- `neovim/` – upstream Neovim submodule (kept clean).
-- `cmake/` – toolchain and build overrides for WASI.
-- `scripts/patch/` – Python patch helpers applied to Lua/luv/libuv during the wasm build.
-- `scripts/build/` – Python helpers invoked during codegen (host Lua wrapper).
-- `scripts/toolchain/` – Python fetch helpers for wasi-sdk/CMake archives.
-- `scripts/config/` – shared flag presets for the wasm build.
-- `patches/wasi-shim/` – header and source stubs for missing POSIX pieces (pty, signal, fcntl, termios, etc.).
-- `patches/libuv-wasi.patch` – minimal libuv patch applied to the downloaded tarball.
-- `build-wasm-deps/` – out-of-tree dependency build (luv, libuv, lua, treesitter, etc.).
-- `build-wasm/` – Neovim build tree targeting wasm32-wasi.
-- `.toolchains/` – downloaded wasi-sdk and portable CMake archives.
-
 ## Prerequisites
-- Python 3 and curl available on the host (for toolchain/deps downloads).
-- No system-level installations are required; everything is fetched into `.toolchains/`.
+- Python 3 and `curl` (toolchain/deps downloads)
+- No system installs needed; everything is fetched into `.toolchains/`
 
 ## Build
-1) Build host Lua + nlua0 used during codegen (skipped if you point `HOST_LUA_PRG`/`HOST_NLUA0` elsewhere):
-```sh
-make host-lua
-```
-Artifacts land in `build-host/.deps/usr/bin/lua` and `build-host/libnlua0-host.so`; `make wasm` will automatically build them when using the defaults.
-
-2) Fetch toolchains and build bundled dependencies (luv/treesitter/etc.). libuv and PUC Lua are built first as standalone wasm static libs, then the remaining deps reuse them:
-```sh
-make wasm-deps
-```
-
-3) Configure and build Neovim for wasm32-wasi:
-```sh
-make wasm
-```
-This emits `build-wasm/bin/nvim`, which is a WASI module (not runnable directly on the host). Runtime helptags are intentionally skipped because the wasm binary cannot execute during the build.
-
-4) Clean build artifacts if needed:
-```sh
-make wasm-clean
-```
+- Build host Lua (codegen):
+  - `make host-lua`
+- Build deps (fetch toolchains, build bundled deps):
+  - `make wasm-deps`
+- Build wasm (configure + build nvim):
+  - `make wasm`
+- Clean:
+  - `make wasm-clean`
 
 ## Notes
-- Submodule contents must remain untouched; any WASI adjustments belong under `patches/` and are injected via `cmake/wasm-overrides.cmake`.
-- `Makefile` pins CMake and wasi-sdk versions, and passes all dependency paths explicitly to avoid Neovim-side edits.
-- The produced wasm binary relies on stubbed POSIX features (pty/signal/socket emulation). It is intended for embedding in a WASI runtime, not for feature parity with native Neovim.
-- `make wasm-libs` only rebuilds the external libuv/Lua artifacts if you need to refresh them without rebuilding the rest of the deps tree.
+- `neovim/` stays untouched; WASI changes live outside the submodule.
+- Output `build-wasm/bin/nvim` is a WASI module (not runnable on the host directly).
 
 ## Browser demo
 - Build wasm: `make wasm`
-- Pick a demo directory: `examples/demo/` (DOM grid), `examples/demo-monaco/`, or `examples/demo-xterm/`.
-- Copy assets into it:
-  - `cp build-wasm/bin/nvim examples/<demo>/nvim.wasm`
+- Pick a demo:
+  - [`examples/demo/`](examples/demo/) — DOM grid (`SharedArrayBuffer`; requires COOP/COEP)
+  - [`examples/demo-asyncify/`](examples/demo-asyncify/) — SAB-free (Asyncify + `postMessage`; no COOP/COEP)
+  - [`examples/demo-monaco/`](examples/demo-monaco/) — Monaco UI (`SharedArrayBuffer`; requires COOP/COEP)
+  - [`examples/demo-xterm/`](examples/demo-xterm/) — xterm.js UI (`SharedArrayBuffer`; requires COOP/COEP)
+- Assets:
   - `tar -czf examples/<demo>/nvim-runtime.tar.gz -C neovim/.. runtime -C build-wasm usr nvim_version.lua`
-- Serve that directory with COOP/COEP headers (any static server is fine; ensure SharedArrayBuffer is enabled).
-- Open http://localhost:8765 (or your chosen port). Neovim starts automatically; click the editor/terminal area to focus.
+  - SAB demos: `cp build-wasm/bin/nvim examples/<demo>/nvim.wasm`
+  - SAB-free demo: `make demo-asyncify` (copies `build-wasm/bin/nvim-asyncify.wasm` into `examples/demo-asyncify/nvim-asyncify.wasm`)
+
+## Asyncify build (SAB-free)
+### Why
+`SharedArrayBuffer` requires COOP/COEP headers. If you want a browser demo that works without those headers, use the Asyncify build and the SAB-free demo.
+
+### Difference vs normal build
+- Normal build (`build-wasm/bin/nvim`): designed for demos that use a `SharedArrayBuffer` ring for stdin (needs COOP/COEP).
+- Asyncify build (`build-wasm/bin/nvim-asyncify.wasm`): post-processed with Binaryen Asyncify (no Neovim source changes) so `wasi_snapshot_preview1.poll_oneoff` can suspend, letting the Worker receive `postMessage` input without SAB.
+- Tradeoffs: larger wasm and some overhead from Asyncify.
+
+### Build
+- Build the base wasm first: `make host-lua && make wasm-deps && make wasm`
+- Generate the Asyncify wasm:
+  - `make wasm-asyncify`
+- Copy it into the SAB-free demo directory:
+  - `make demo-asyncify`
+
+### Run
+- `python3 examples/demo-asyncify/serve.py`

@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nvim wasm demo (SAB-free)</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #0b0f15; color: #e8edf5; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; justify-content: center; min-height: 100vh; }
+      .app { width: min(960px, 100%); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      .status { font-weight: 600; }
+      .grid { min-height: 480px; border: 1px solid #2a3346; border-radius: 10px; padding: 10px; background: #050912; color: #dfe5f1; font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 14px; line-height: 1.35; white-space: pre; overflow: auto; outline: none; }
+      .grid:focus { border-color: #5ad1ff; }
+      .cursor { background: transparent; color: inherit; }
+      .hint { color: #9aa4b5; font-size: 12px; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="status" id="status">Loading...</div>
+      <div class="hint" id="mode">mode: -</div>
+      <div id="grid" class="grid" tabindex="0" aria-label="Neovim grid"></div>
+      <p class="hint">SAB-free demo: input is sent over postMessage. This build uses Binaryen Asyncify (no COOP/COEP, no browser flags).</p>
+    </div>
+
+    <script type="module">
+      import { encode } from "./msgpack.js?v9";
+      const statusEl = document.getElementById("status");
+      const gridEl = document.getElementById("grid");
+      const modeEl = document.getElementById("mode");
+      const gridStyles = window.getComputedStyle(gridEl);
+      const fallbackFg = gridStyles.color || "#dfe5f1";
+      const fallbackBg = gridStyles.backgroundColor || "#050912";
+      const WORKER_VERSION = "v24";
+      const DEBUG = new URLSearchParams(location.search).has("debug");
+      const cols = 96;
+      const rows = 32;
+      let worker = null;
+      let reqId = 0;
+      let primeSent = false;
+      let workerReady = false;
+      let lastClipboard = "";
+      let fatalMessage = "";
+      let lastKey = "";
+      let pendingChunks = [];
+      let pendingKeys = "";
+      let pendingKeysScheduled = false;
+
+      gridEl.addEventListener("click", () => { gridEl.focus(); warmupClipboard(); });
+      gridEl.addEventListener("keydown", (ev) => {
+        const keys = translateKey(ev);
+        if (!keys) return;
+        ev.preventDefault();
+        lastKey = keys;
+        enqueueInput(keys);
+      });
+
+      function startSession() {
+        warmupClipboard();
+        stopSession();
+        reqId = 0;
+        primeSent = false;
+        workerReady = false;
+        worker = new Worker(`./nvim-worker.js?${WORKER_VERSION}`, { type: "module" });
+        worker.onmessage = handleWorkerMessage;
+        worker.postMessage({ type: "start", cols, rows, assetVersion: WORKER_VERSION, debug: DEBUG });
+        setStatus("Starting Neovim...");
+      }
+
+      function stopSession() { if (worker) { worker.terminate(); worker = null; } }
+
+      function primeRpc() {
+        sendRpc("nvim_ui_attach", [cols, rows, { rgb: true, ext_linegrid: true, ext_hlstate: true }]);
+        sendRpc("nvim_ui_set_focus", [true]);
+        sendRpc("nvim_ui_try_resize", [cols, rows]);
+        sendRpc("nvim_command", ["set noswapfile"]);
+        sendRpc("nvim_command", ["set number"]);
+        sendRpc("nvim_command", ["set fillchars=eob:~"]);
+        const clipboardLua = `
+          local function setup_clipboard()
+            local ui_chan = (vim.api.nvim_get_api_info() or {})[1]
+            if not ui_chan then return end
+            local function copy(lines, regtype)
+              vim.rpcnotify(ui_chan, 'wasm-clipboard-copy', lines, regtype)
+            end
+            local function paste()
+              local ok, res = pcall(vim.rpcrequest, ui_chan, 'wasm-clipboard-paste')
+              if not ok then return {}, 'v' end
+              local lines = res and res[1] or {}
+              local regtype = res and res[2] or 'v'
+              return lines, regtype
+            end
+            vim.g.clipboard = {
+              name = 'wasm',
+              copy = { ['+'] = copy, ['*'] = copy },
+              paste = { ['+'] = paste, ['*'] = paste },
+            }
+            vim.cmd('set clipboard=unnamedplus')
+          end
+          setup_clipboard()
+        `;
+        sendRpc("nvim_exec_lua", [clipboardLua, []]);
+        const lua = `
+          local lines = {...}
+          vim.cmd('enew')
+          local buf = vim.api.nvim_get_current_buf()
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+          vim.bo[buf].buftype = ''
+          vim.bo[buf].modifiable = true
+          vim.bo[buf].modified = true
+          vim.api.nvim_buf_set_name(buf, 'demo-asyncify.txt')
+          vim.cmd('redraw!')
+        `;
+        sendRpc("nvim_exec_lua", [lua, [
+          "Neovim WASM demo (SAB-free via Asyncify)",
+          "",
+          "- click the grid and type",
+          "- press i for insert mode",
+          "- :q to quit",
+          "",
+          "This demo uses Asyncify so it runs without COOP/COEP.",
+        ]]);
+        sendRpc("nvim_command", ["redraw!"]);
+        primeSent = true;
+      }
+
+      function sendRpc(method, params = []) {
+        if (!worker) return;
+        const id = reqId++;
+        const msg = encode([0, id, method, params]);
+        if (!workerReady) {
+          pendingChunks.push({ chunk: msg, id, method });
+          return;
+        }
+        worker.postMessage({ type: "stdin", chunk: msg, id, method }, [msg.buffer]);
+      }
+
+      function sendRpcResponse(msgid, error, result) {
+        if (!worker) return;
+        const msg = encode([1, msgid, error, result]);
+        if (!workerReady) {
+          pendingChunks.push({ chunk: msg });
+          return;
+        }
+        worker.postMessage({ type: "stdin", chunk: msg }, [msg.buffer]);
+      }
+
+      function enqueueInput(keys) {
+        pendingKeys += keys;
+        if (pendingKeysScheduled) return;
+        pendingKeysScheduled = true;
+        queueMicrotask(flushInput);
+      }
+
+      function flushInput() {
+        pendingKeysScheduled = false;
+        const keys = pendingKeys;
+        pendingKeys = "";
+        if (!keys) return;
+        // `nvim_input()` enqueues keys asynchronously; nudge the UI loop with a
+        // redraw to ensure an idle Neovim wakes and flushes UI updates.
+        sendRpc("nvim_input", [keys]);
+        sendRpc("nvim_command", ["redraw!"]);
+      }
+
+      function handleWorkerMessage(event) {
+        const { type } = event.data || {};
+        if (type === "draw-text") {
+          const cells = event.data.cells && event.data.cells.length ? event.data.cells : linesToCells(event.data.lines);
+          renderGrid(cells, event.data.cursor, event.data.cursorHlId, event.data.mode, event.data.hls);
+        } else if (type === "exit") {
+          if (fatalMessage && event.data.code !== 0) return;
+          setStatus(`nvim exited (${event.data.code})`, event.data.code !== 0);
+        } else if (type === "stderr") {
+          if (DEBUG && event.data.text) console.warn(event.data.text);
+        } else if (type === "clipboard-copy") {
+          const text = (event.data.lines || []).join("\n");
+          if (!navigator.clipboard?.writeText) return;
+          lastClipboard = text;
+          navigator.clipboard.writeText(text).catch(() => { lastClipboard = text; });
+        } else if (type === "clipboard-paste") {
+          const req = event.data.requestId;
+          doClipboardPaste(req);
+        } else if (type === "ready") {
+          workerReady = true;
+          setStatus("Ready");
+          const queued = pendingChunks;
+          pendingChunks = [];
+          for (const item of queued) {
+            const chunk = item?.chunk;
+            if (!chunk) continue;
+            if (item.id !== undefined && item.method) {
+              worker.postMessage({ type: "stdin", chunk, id: item.id, method: item.method }, [chunk.buffer]);
+            } else {
+              worker.postMessage({ type: "stdin", chunk }, [chunk.buffer]);
+            }
+          }
+          if (!primeSent) primeRpc();
+          maybeAutoType();
+        } else if (type === "fatal") {
+          fatalMessage = event.data.message || "Worker error";
+          console.error(fatalMessage);
+          setStatus(fatalMessage, true);
+        }
+      }
+
+      function renderGrid(cells = [], cursor = null, cursorHlId = 0, mode = "-", hls = {}) {
+        const rows = Array.isArray(cells) && cells.length ? cells : [];
+        const cur = cursor || { row: 0, col: 0 };
+        const row = Math.max(0, Math.min(cur.row || 0, rows.length ? rows.length - 1 : 0));
+        const col = Math.max(0, cur.col || 0);
+        const hlMap = hls || {};
+
+        let html = "";
+        for (let r = 0; r < rows.length; r += 1) {
+          const rowCells = Array.isArray(rows[r]) ? rows[r] : [];
+          const lineLen = rowCells.length;
+          for (let c = 0; c < lineLen; c += 1) {
+            const cell = rowCells[c] || {};
+            const ch = escapeChar(cell.ch || " ");
+            const attr = r === row && c === col
+              ? getHl(hlMap, cursorHlId, true)
+              : getHl(hlMap, cell.hl, false);
+            const style = styleFromHl(attr);
+            if (r === row && c === col) {
+              html += style ? `<span class="cursor" style="${style}">${ch}</span>` : `<span class="cursor">${ch}</span>`;
+            } else if (style) {
+              html += `<span style="${style}">${ch}</span>`;
+            } else {
+              html += ch;
+            }
+          }
+          if (r === row && col >= lineLen) {
+            html += " ".repeat(col - lineLen);
+            const attr = getHl(hlMap, cursorHlId, true);
+            const style = styleFromHl(attr);
+            html += style ? `<span class="cursor" style="${style}"> </span>` : `<span class="cursor"> </span>`;
+          }
+          if (r < rows.length - 1) html += "\n";
+        }
+
+        gridEl.innerHTML = html || " ";
+        modeEl.textContent = `mode: ${mode || "-"}`;
+      }
+
+      function setStatus(text, warn = false) {
+        statusEl.textContent = text;
+        statusEl.style.color = warn ? "#ff9ea2" : "#e8edf5";
+      }
+
+      function escapeChar(ch) {
+        if (ch === "&") return "&amp;";
+        if (ch === "<") return "&lt;";
+        if (ch === ">") return "&gt;";
+        if (ch === "\"") return "&quot;";
+        return ch;
+      }
+
+      function styleFromHl(attr) {
+        if (!attr) return "";
+        let fg = attr.foreground;
+        let bg = attr.background;
+        if (attr.reverse) {
+          const tmpBg = bg || fallbackBg;
+          const tmpFg = fg || fallbackFg;
+          fg = tmpBg;
+          bg = tmpFg;
+        } else {
+          if (!fg) fg = fallbackFg;
+          if (!bg) bg = null;
+        }
+        const parts = [];
+        if (fg) parts.push(`color:${fg}`);
+        if (bg) parts.push(`background:${bg}`);
+        return parts.join(";");
+      }
+
+      function getHl(map, id, isCursor) {
+        const key = id != null && map[id] !== undefined ? id : String(id);
+        const hl = (key != null && map[key] !== undefined ? map[key] : null) || map[0] || map["0"] || null;
+        if (!hl) {
+          if (isCursor) return { foreground: fallbackFg, background: fallbackBg, reverse: true };
+          return null;
+        }
+        const reverse = Boolean(hl.reverse) || (isCursor && Number(id) === 0);
+        return { foreground: hl.foreground, background: hl.background, reverse };
+      }
+
+      function linesToCells(lines = []) {
+        const out = [];
+        for (const line of lines || []) {
+          const row = [];
+          for (const ch of String(line)) row.push({ ch, hl: 0 });
+          out.push(row);
+        }
+        return out;
+      }
+
+      function translateKey(ev) {
+        const key = ev.key;
+        if (key === "Backspace") return "<BS>";
+        if (key === "Enter") return "<CR>";
+        if (key === "Tab") return "<Tab>";
+        if (key === "Escape") return "<Esc>";
+        if (key === "ArrowUp") return "<Up>";
+        if (key === "ArrowDown") return "<Down>";
+        if (key === "ArrowLeft") return "<Left>";
+        if (key === "ArrowRight") return "<Right>";
+        if (key === "PageUp") return "<PageUp>";
+        if (key === "PageDown") return "<PageDown>";
+        if (key === "Home") return "<Home>";
+        if (key === "End") return "<End>";
+        if (key && key.length === 1) {
+          if (ev.ctrlKey && (key === "c" || key === "C")) return "<C-c>";
+          if (ev.ctrlKey && (key === "d" || key === "D")) return "<C-d>";
+          if (ev.ctrlKey && (key === "z" || key === "Z")) return "<C-z>";
+          if (ev.ctrlKey && (key === "u" || key === "U")) return "<C-u>";
+          if (ev.ctrlKey && (key === "w" || key === "W")) return "<C-w>";
+          if (ev.ctrlKey && (key === "[")) return "<Esc>";
+          return key;
+        }
+        return null;
+      }
+
+      function warmupClipboard() {
+        if (!navigator.clipboard?.readText) return;
+        navigator.clipboard.readText().then((t) => { if (typeof t === "string") lastClipboard = t; }).catch(() => {});
+      }
+
+      function doClipboardPaste(requestId) {
+        if (!navigator.clipboard?.readText) {
+          sendRpcResponse(requestId, null, [[], "v"]);
+          return;
+        }
+        navigator.clipboard.readText().then((text) => {
+          lastClipboard = text || "";
+          const lines = String(text || "").split(/\r?\n/);
+          sendRpcResponse(requestId, null, [lines, "v"]);
+        }).catch(() => {
+          const lines = String(lastClipboard || "").split(/\r?\n/);
+          sendRpcResponse(requestId, null, [lines, "v"]);
+        });
+      }
+
+      if (new URLSearchParams(location.search).has("debug")) {
+        window.nvimWasmDemo = {
+          sendRpc,
+          sendRpcResponse,
+          sendInput: enqueueInput,
+        };
+      }
+
+      function maybeAutoType() {
+        const params = new URLSearchParams(location.search);
+        const seq = params.get("autotype");
+        if (!seq) return;
+        let delay = 0;
+        for (const ch of String(seq)) {
+          setTimeout(() => enqueueInput(ch), delay);
+          delay += 80;
+        }
+      }
+
+      startSession();
+    </script>
+  </body>
+</html>

@@ -33,6 +33,44 @@ CMAKE_ROOT := $(TOOLCHAIN_DIR)/cmake-$(CMAKE_VERSION)-$(WASI_SDK_OS)-$(WASI_SDK_
 CMAKE := $(CMAKE_ROOT)/bin/cmake
 CMAKE_GENERATOR ?= "Unix Makefiles"
 
+BINARYEN_VERSION ?= 125
+BINARYEN_OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]' | sed -e 's/darwin/macos/')
+BINARYEN_ARCH ?= $(shell uname -m | sed -e 's/x86_64/x86_64/' -e 's/aarch64/aarch64/' -e 's/arm64/aarch64/')
+BINARYEN_TAR := binaryen-version_$(BINARYEN_VERSION)-$(BINARYEN_ARCH)-$(BINARYEN_OS).tar.gz
+BINARYEN_URL ?= https://github.com/WebAssembly/binaryen/releases/download/version_$(BINARYEN_VERSION)/$(BINARYEN_TAR)
+BINARYEN_ROOT := $(TOOLCHAIN_DIR)/binaryen-version_$(BINARYEN_VERSION)
+BINARYEN_WASM_OPT ?= $(BINARYEN_ROOT)/bin/wasm-opt
+
+# Binaryen Asyncify post-processing (for SAB-free browser demo).
+#
+# Notes:
+# - `ASYNCIFY_IMPORTS` is a comma-separated list of `module.name` imports.
+# - `ASYNCIFY_ADDLIST` / `ASYNCIFY_REMOVELIST` are comma-separated wasm
+#   function names (use `make wasm-asyncify ASYNCIFY_VERBOSE=1` to inspect).
+ASYNCIFY_IMPORTS ?= wasi_snapshot_preview1.poll_oneoff
+ASYNCIFY_ADDLIST ?=
+ASYNCIFY_REMOVELIST ?=
+ASYNCIFY_IGNORE_INDIRECT ?= 0
+ASYNCIFY_VERBOSE ?= 0
+ASYNCIFY_ASSERTS ?= 0
+
+ASYNCIFY_PASS_ARGS := --pass-arg=asyncify-imports@$(ASYNCIFY_IMPORTS)
+ifneq ($(strip $(ASYNCIFY_ADDLIST)),)
+ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-addlist@$(ASYNCIFY_ADDLIST) --pass-arg=asyncify-propagate-addlist
+endif
+ifneq ($(strip $(ASYNCIFY_REMOVELIST)),)
+ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-removelist@$(ASYNCIFY_REMOVELIST)
+endif
+ifneq ($(ASYNCIFY_IGNORE_INDIRECT),0)
+ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-ignore-indirect
+endif
+ifneq ($(ASYNCIFY_VERBOSE),0)
+ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-verbose
+endif
+ifneq ($(ASYNCIFY_ASSERTS),0)
+ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-asserts
+endif
+
 WASM_LINK_FLAGS = $(shell python3 $(PWD)/scripts/config/wasm_flags.py --field ldflags-common --sysroot $(WASI_SDK_ROOT)/share/wasi-sysroot --eh "$(WASM_EH_FLAGS)")
 WASM_CFLAGS_COMMON = $(shell python3 $(PWD)/scripts/config/wasm_flags.py --field cflags-common --patch-dir $(PATCH_DIR) --eh "$(WASM_EH_FLAGS)")
 WASM_LUA_CFLAGS = $(shell python3 $(PWD)/scripts/config/wasm_flags.py --field lua-cflags --patch-dir $(PATCH_DIR) --eh "$(WASM_EH_FLAGS)")
@@ -43,8 +81,10 @@ WASM_DEPS_DOWNLOAD := $(TOOLCHAIN_DIR)/.deps-download-wasm
 WASM_BUILD := $(PWD)/build-wasm
 HOST_BUILD_DIR := $(PWD)/build-host
 HOST_PREFIX := $(HOST_BUILD_DIR)/.deps/usr
-HOST_LUA_PRG_DEFAULT := $(HOST_PREFIX)/bin/lua
-HOST_LUAC_DEFAULT := $(HOST_PREFIX)/bin/luac
+# Host-side Lua used for Neovim code generation during cross-compilation.
+# Neovim's build typically produces these under build-host/lua-src/.
+HOST_LUA_PRG_DEFAULT := $(HOST_BUILD_DIR)/lua-src/src/lua
+HOST_LUAC_DEFAULT := $(HOST_BUILD_DIR)/lua-src/src/luac
 HOST_NLUA0_DEFAULT := $(HOST_BUILD_DIR)/libnlua0-host.so
 LIBUV_PATCHED_TAR := $(TOOLCHAIN_DIR)/libuv-wasi.tar.gz
 LIBUV_ORIG_TAR := $(TOOLCHAIN_DIR)/libuv-1.51.0.tar.gz
@@ -69,29 +109,27 @@ LUA_ORIG_TAR := $(TOOLCHAIN_DIR)/$(LUA_TAR)
 LUA_ORIG_URL ?= https://www.lua.org/ftp/$(LUA_TAR)
 LUA_SRC_DIR := $(WASM_DEPS_BUILD)/src/lua
 
-.PHONY: wasm wasm-configure wasm-deps wasm-toolchain wasm-build-tools wasm-clean libuv-patched wasm-libs libuv-wasm lua-wasm luv-wasm host-lua host-lua-configure
+.PHONY: wasm wasm-configure wasm-deps wasm-toolchain wasm-build-tools binaryen-toolchain wasm-clean libuv-patched wasm-libs libuv-wasm lua-wasm luv-wasm host-lua host-lua-configure wasm-jspi wasm-asyncify demo-asyncify
 
 HOST_LUA_PRG ?= $(HOST_LUA_PRG_DEFAULT)
 HOST_LUAC ?= $(HOST_LUAC_DEFAULT)
 HOST_NLUA0 ?= $(HOST_NLUA0_DEFAULT)
 HOST_LUA_GEN_WRAPPER ?= $(PWD)/scripts/build/host_lua_gen.py
 
-ifeq ($(HOST_LUA_PRG),$(HOST_LUA_PRG_DEFAULT))
-NEED_BUILD_HOST_LUA := 1
-endif
-
-host-lua: host-lua-configure
+host-lua:
 	@if [ -x "$(HOST_LUA_PRG)" ] && [ -f "$(HOST_NLUA0)" ]; then \
 	  echo "host-lua: reusing existing host lua at $(HOST_LUA_PRG)"; \
-	  exit 0; \
-	fi
-	$(CMAKE) --build $(HOST_BUILD_DIR) --target nlua0 -- -j$(CMAKE_BUILD_JOBS)
-	@if [ -f "$(HOST_BUILD_DIR)/libnlua0.so" ]; then \
-	  cp "$(HOST_BUILD_DIR)/libnlua0.so" "$(HOST_NLUA0_DEFAULT)"; \
-	elif [ -f "$(HOST_BUILD_DIR)/libnlua0.dylib" ]; then \
-	  cp "$(HOST_BUILD_DIR)/libnlua0.dylib" "$(HOST_NLUA0_DEFAULT)"; \
-	elif [ -f "$(HOST_BUILD_DIR)/nlua0.dll" ]; then \
-	  cp "$(HOST_BUILD_DIR)/nlua0.dll" "$(HOST_NLUA0_DEFAULT)"; \
+	else \
+	  set -e; \
+	  $(MAKE) host-lua-configure; \
+	  $(CMAKE) --build $(HOST_BUILD_DIR) --target nlua0 -- -j$(CMAKE_BUILD_JOBS); \
+	  if [ -f "$(HOST_BUILD_DIR)/libnlua0.so" ]; then \
+	    cp "$(HOST_BUILD_DIR)/libnlua0.so" "$(HOST_NLUA0_DEFAULT)"; \
+	  elif [ -f "$(HOST_BUILD_DIR)/libnlua0.dylib" ]; then \
+	    cp "$(HOST_BUILD_DIR)/libnlua0.dylib" "$(HOST_NLUA0_DEFAULT)"; \
+	  elif [ -f "$(HOST_BUILD_DIR)/nlua0.dll" ]; then \
+	    cp "$(HOST_BUILD_DIR)/nlua0.dll" "$(HOST_NLUA0_DEFAULT)"; \
+	  fi; \
 	fi
 
 host-lua-configure: wasm-build-tools
@@ -104,12 +142,25 @@ host-lua-configure: wasm-build-tools
 		-DUSE_BUNDLED_LIBVTERM=ON -DUSE_BUNDLED_TS=ON -DUSE_BUNDLED_TREESITTER=ON \
 		-DUSE_BUNDLED_UNIBILIUM=ON -DENABLE_WASMTIME=OFF -DENABLE_LTO=OFF
 
-ifdef NEED_BUILD_HOST_LUA
 wasm-configure: host-lua
-endif
 
 wasm: wasm-configure
 	$(CMAKE) --build $(WASM_BUILD) --target nvim_bin -- -j$(CMAKE_BUILD_JOBS)
+
+wasm-jspi: binaryen-toolchain
+	@test -f "$(WASM_BUILD)/bin/nvim" || (echo "missing $(WASM_BUILD)/bin/nvim; run: make wasm" && exit 1)
+	$(BINARYEN_WASM_OPT) $(WASM_BUILD)/bin/nvim --jspi -o $(WASM_BUILD)/bin/nvim-jspi.wasm
+
+wasm-asyncify: binaryen-toolchain
+	@test -f "$(WASM_BUILD)/bin/nvim" || (echo "missing $(WASM_BUILD)/bin/nvim; run: make wasm" && exit 1)
+	$(BINARYEN_WASM_OPT) $(WASM_BUILD)/bin/nvim \
+	  --asyncify \
+	  $(ASYNCIFY_PASS_ARGS) \
+	  -o $(WASM_BUILD)/bin/nvim-asyncify.wasm
+
+demo-asyncify: wasm-asyncify
+	@mkdir -p examples/demo-asyncify
+	cp -f $(WASM_BUILD)/bin/nvim-asyncify.wasm examples/demo-asyncify/nvim-asyncify.wasm
 
 wasm-configure: wasm-deps
 	$(CMAKE) -S $(NEOVIM_DIR) -B $(WASM_BUILD) -G $(CMAKE_GENERATOR) \
@@ -197,6 +248,13 @@ wasm-build-tools:
 	  --archive "$(TOOLCHAIN_DIR)/$(CMAKE_TAR)" \
 	  --dest "$(TOOLCHAIN_DIR)" \
 	  --expected "$(CMAKE_ROOT)"
+
+binaryen-toolchain:
+	@python3 $(PWD)/scripts/toolchain/fetch.py \
+	  --url "$(BINARYEN_URL)" \
+	  --archive "$(TOOLCHAIN_DIR)/$(BINARYEN_TAR)" \
+	  --dest "$(TOOLCHAIN_DIR)" \
+	  --expected "$(BINARYEN_ROOT)"
 
 wasm-libs: wasm-toolchain wasm-build-tools libuv-wasm lua-wasm luv-wasm
 

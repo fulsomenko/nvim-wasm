@@ -27,11 +27,15 @@ function(_nvim_wasm_disable_pty)
   set(_stub_srcs
     "${_wrap_root}/patches/wasi-shim/pty_stub.c"
     "${_wrap_root}/patches/wasi-shim/signal_stub.c")
+  set(_asyncify_src "${_wrap_root}/patches/asyncify/asyncify_region.c")
   foreach(_stub IN LISTS _stub_srcs)
     if(NOT EXISTS "${_stub}")
       message(FATAL_ERROR "wasm stub source not found: ${_stub}")
     endif()
   endforeach()
+  if(NOT EXISTS "${_asyncify_src}")
+    message(FATAL_ERROR "wasm asyncify helper source not found: ${_asyncify_src}")
+  endif()
 
   set(_remove_srcs
     "${CMAKE_SOURCE_DIR}/src/nvim/os/pty_proc_unix.c"
@@ -80,6 +84,10 @@ function(_nvim_wasm_disable_pty)
       "${_deps_libdir}/libunibilium.a"
       "${_deps_libdir}/liblua.a"
       "${_deps_libdir}/libuv.a")
+
+    # Reserve an Asyncify stack/data region in the wasm binary itself so it
+    # cannot be overwritten by the C heap during execution.
+    target_sources(nvim_bin PRIVATE "${_asyncify_src}")
   endif()
 
   # Skip helptags generation which would try to run the wasm binary.

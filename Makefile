@@ -53,6 +53,9 @@ ASYNCIFY_REMOVELIST ?=
 ASYNCIFY_IGNORE_INDIRECT ?= 0
 ASYNCIFY_VERBOSE ?= 0
 ASYNCIFY_ASSERTS ?= 0
+ASYNCIFY_OPT ?= -O2
+ASYNCIFY_STRIP_DEBUG ?= 1
+ASYNCIFY_STRIP_PRODUCERS ?= 1
 
 ASYNCIFY_PASS_ARGS := --pass-arg=asyncify-imports@$(ASYNCIFY_IMPORTS)
 ifneq ($(strip $(ASYNCIFY_ADDLIST)),)
@@ -69,6 +72,13 @@ ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-verbose
 endif
 ifneq ($(ASYNCIFY_ASSERTS),0)
 ASYNCIFY_PASS_ARGS += --pass-arg=asyncify-asserts
+endif
+ASYNCIFY_POST_OPTS := $(ASYNCIFY_OPT)
+ifneq ($(ASYNCIFY_STRIP_DEBUG),0)
+ASYNCIFY_POST_OPTS += --strip-debug
+endif
+ifneq ($(ASYNCIFY_STRIP_PRODUCERS),0)
+ASYNCIFY_POST_OPTS += --strip-producers
 endif
 
 WASM_LINK_FLAGS = $(shell python3 $(PWD)/scripts/config/wasm_flags.py --field ldflags-common --sysroot $(WASI_SDK_ROOT)/share/wasi-sysroot --eh "$(WASM_EH_FLAGS)")
@@ -156,6 +166,7 @@ wasm-asyncify: binaryen-toolchain
 	$(BINARYEN_WASM_OPT) $(WASM_BUILD)/bin/nvim \
 	  --asyncify \
 	  $(ASYNCIFY_PASS_ARGS) \
+	  $(ASYNCIFY_POST_OPTS) \
 	  -o $(WASM_BUILD)/bin/nvim-asyncify.wasm
 
 demo-asyncify: wasm-asyncify

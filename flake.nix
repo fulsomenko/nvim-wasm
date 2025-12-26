@@ -10,10 +10,20 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        nvimWasm = pkgs.callPackage ./nix/nvim-wasm.nix {};
       in {
         packages = {
-          default = pkgs.callPackage ./nix/nvim-wasm.nix {};
-          nvim-wasm = self.packages.${system}.default;
+          # Default: full build with both variants (nvim.wasm + nvim-asyncify.wasm)
+          default = nvimWasm;
+          nvim-wasm = nvimWasm;
+
+          # Asyncify variant for wasmi/interpreters without WASM exception support
+          # Uses Binaryen's asyncify transform for setjmp/longjmp via stack rewinding
+          nvim-wasm-asyncify = pkgs.runCommand "nvim-wasm-asyncify" {} ''
+            mkdir -p $out/bin $out/share
+            cp ${nvimWasm}/bin/nvim-asyncify.wasm $out/bin/nvim.wasm
+            cp -r ${nvimWasm}/share/nvim $out/share/
+          '';
         };
 
         devShells.default = pkgs.mkShell {

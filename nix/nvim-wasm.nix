@@ -22,6 +22,16 @@ let
   wasiSdkArch = if stdenvNoCC.hostPlatform.isx86_64 then "x86_64" else "arm64";
   wasiSdkOs = if stdenvNoCC.isDarwin then "macos" else "linux";
 
+  # FOD output hashes per platform
+  # Note: -fno-exceptions is NOT viable because WASI setjmp/longjmp requires exception handling.
+  # For wasmi compatibility, use the asyncify variant which transforms setjmp/longjmp to stack rewinding.
+  outputHashes = {
+    "arm64-macos" = "sha256-u3GB3amlGxASx/Dt8Lci3qJ18OxgTF8RvgN48BfUSeg=";
+    "x86_64-macos" = lib.fakeSha256;  # TODO: compute on x86_64-macos
+    "arm64-linux" = lib.fakeSha256;   # TODO: compute on arm64-linux
+    "x86_64-linux" = lib.fakeSha256;  # TODO: compute on x86_64-linux
+  };
+
   # WASI SDK hashes per platform
   wasiSdkHashes = {
     "arm64-macos" = "sha256-4RVSkT4/meg01/59ob0IGrr3ZHWe12tgl6NMY/yDZl4=";
@@ -83,7 +93,7 @@ let
     # Fixed-output derivation settings
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = "sha256-u3GB3amlGxASx/Dt8Lci3qJ18OxgTF8RvgN48BfUSeg=";
+    outputHash = outputHashes."${wasiSdkArch}-${wasiSdkOs}";
 
     dontConfigure = true;
     dontFixup = true;

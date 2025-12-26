@@ -22,10 +22,18 @@ let
   wasiSdkArch = if stdenvNoCC.hostPlatform.isx86_64 then "x86_64" else "arm64";
   wasiSdkOs = if stdenvNoCC.isDarwin then "macos" else "linux";
 
+  # WASI SDK hashes per platform
+  wasiSdkHashes = {
+    "arm64-macos" = "sha256-4RVSkT4/meg01/59ob0IGrr3ZHWe12tgl6NMY/yDZl4=";
+    "x86_64-macos" = "sha256-0N4v0+pcVwYO+ofkNWwWS+w2iZcvI4bwyaicWOEM7I0=";
+    "arm64-linux" = "sha256-BSrXczl9yeWqmftM/vaUF15rHoG7KtHTyOez/IFEG3w=";
+    "x86_64-linux" = "sha256-h9HRooedE5zcYkuWjvrT1Kl7gHjN/5XmOsiOyv0aAXE=";
+  };
+
   # Toolchain sources (platform-specific)
   wasiSdk = fetchurl {
     url = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/wasi-sdk-29.0-${wasiSdkArch}-${wasiSdkOs}.tar.gz";
-    sha256 = "sha256-4RVSkT4/meg01/59ob0IGrr3ZHWe12tgl6NMY/yDZl4=";
+    sha256 = wasiSdkHashes."${wasiSdkArch}-${wasiSdkOs}";
   };
 
   # Source dependencies for WASM build (platform-independent)

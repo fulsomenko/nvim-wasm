@@ -26,7 +26,7 @@ let
   # Built with WASM_EH_FLAGS="-mno-exception-handling" for wasmi compatibility
   # Asyncify handles setjmp/longjmp via stack rewinding
   outputHashes = {
-    "arm64-macos" = lib.fakeSha256;  # Needs recompute after -mno-exception-handling change
+    "arm64-macos" = "sha256-shrWSUG2WATE0n8QkSs7F26wlOwNF8rxoB5S1moJ+Jw=";
     "x86_64-macos" = lib.fakeSha256;  # TODO: compute on x86_64-macos
     "arm64-linux" = lib.fakeSha256;   # TODO: compute on arm64-linux
     "x86_64-linux" = lib.fakeSha256;  # TODO: compute on x86_64-linux

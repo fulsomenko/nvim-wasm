@@ -23,10 +23,10 @@ let
   wasiSdkOs = if stdenvNoCC.isDarwin then "macos" else "linux";
 
   # FOD output hashes per platform
-  # Note: -fno-exceptions is NOT viable because WASI setjmp/longjmp requires exception handling.
-  # For wasmi compatibility, use the asyncify variant which transforms setjmp/longjmp to stack rewinding.
+  # Built with WASM_EH_FLAGS="-mno-exception-handling" for wasmi compatibility
+  # Asyncify handles setjmp/longjmp via stack rewinding
   outputHashes = {
-    "arm64-macos" = "sha256-u3GB3amlGxASx/Dt8Lci3qJ18OxgTF8RvgN48BfUSeg=";
+    "arm64-macos" = lib.fakeSha256;  # Needs recompute after -mno-exception-handling change
     "x86_64-macos" = lib.fakeSha256;  # TODO: compute on x86_64-macos
     "arm64-linux" = lib.fakeSha256;   # TODO: compute on arm64-linux
     "x86_64-linux" = lib.fakeSha256;  # TODO: compute on x86_64-linux
@@ -176,13 +176,27 @@ let
         cp build-host/lib/libnlua0.dylib build-host/libnlua0-host.so
       fi
 
+      echo "=== Compiling setjmp stub for wasmi compatibility ==="
+      mkdir -p build-wasm-deps
+      # Compile custom setjmp/longjmp that doesn't use WASM exceptions
+      .toolchains/wasi-sdk-${wasiSdkVersion}-${wasiSdkArch}-${wasiSdkOs}/bin/clang \
+        --target=wasm32-wasi \
+        -mno-exception-handling \
+        -c $PWD/patches/wasi-shim/setjmp_stub.c \
+        -o build-wasm-deps/setjmp_stub.o
+
       echo "=== Building WASM dependencies ==="
-      # Pass empty macOS flags to prevent cmake from auto-detecting
+      # Override WASM_EH_FLAGS to disable exception handling instructions for wasmi compatibility
+      # Asyncify will handle setjmp/longjmp via stack rewinding instead
       make wasm-deps CMAKE=cmake CMAKE_BUILD_JOBS=$NIX_BUILD_CORES WASM_DEPS_JOBS=$NIX_BUILD_CORES \
-        CMAKE_OSX_ARCHITECTURES="" CMAKE_OSX_DEPLOYMENT_TARGET="" CMAKE_OSX_SYSROOT=""
+        CMAKE_OSX_ARCHITECTURES="" CMAKE_OSX_DEPLOYMENT_TARGET="" CMAKE_OSX_SYSROOT="" \
+        WASM_EH_FLAGS="-mno-exception-handling"
 
       echo "=== Building WASM Neovim ==="
-      make wasm CMAKE=cmake CMAKE_BUILD_JOBS=$NIX_BUILD_CORES
+      # Link with our setjmp stub
+      make wasm CMAKE=cmake CMAKE_BUILD_JOBS=$NIX_BUILD_CORES \
+        WASM_EH_FLAGS="-mno-exception-handling" \
+        CMAKE_EXE_LINKER_FLAGS="$PWD/build-wasm-deps/setjmp_stub.o"
 
       echo "=== Building Asyncify variant ==="
       # Call wasm-opt directly to avoid Makefile's binaryen download

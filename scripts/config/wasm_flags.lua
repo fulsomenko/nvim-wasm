@@ -63,8 +63,9 @@ local function compute_flags(patch_dir, sysroot, eh_flags)
     .. " -D_WASI_EMULATED_SIGNAL"
     .. " -I" .. join(patch_dir, "wasi-shim/include")
     .. " -include " .. join(patch_dir, "wasi-shim/wasi_env_shim.h")
+  -- Note: -lsetjmp removed - using custom setjmp/longjmp stubs for wasmi compatibility
   local ldflags_common = "--target=wasm32-wasi --sysroot=" .. sysroot .. " " .. eh_ld
-    .. " -Wl,--allow-undefined -lwasi-emulated-signal -lsetjmp -Qunused-arguments"
+    .. " -Wl,--allow-undefined -lwasi-emulated-signal -Qunused-arguments"
   return {
     ["cflags-common"] = cflags_common,
     ["lua-cflags"] = lua_cflags,

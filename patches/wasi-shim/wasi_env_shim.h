@@ -1,9 +1,36 @@
-// WASI lacks libuv's uv_os_getenv/uv_os_setenv implementations.
-// Provide minimal shims using the C library getenv/setenv so Neovim can read
-// the environment passed via WASI.
+// WASI shims for nvim-wasm
+// Provides minimal implementations for features missing in WASI.
 #pragma once
 
 #ifdef __wasi__
+
+/*
+ * Custom setjmp/longjmp that bypasses WASI SDK's exception handling requirement.
+ * These stubs are compatible with Binaryen's asyncify transformation.
+ * Must be defined BEFORE any other includes to prevent the WASI SDK setjmp.h from loading.
+ */
+#ifndef _WASI_SHIM_SETJMP_H
+#define _WASI_SHIM_SETJMP_H
+
+typedef long jmp_buf[16];
+typedef long sigjmp_buf[16];
+
+/* Declare as extern - implemented in setjmp_stub.c */
+int setjmp(jmp_buf env) __attribute__((returns_twice));
+void longjmp(jmp_buf env, int val) __attribute__((noreturn));
+int sigsetjmp(sigjmp_buf env, int savemask) __attribute__((returns_twice));
+void siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
+
+#define _setjmp(env) setjmp(env)
+#define _longjmp(env, val) longjmp(env, val)
+
+/* Prevent WASI SDK's setjmp.h from being included */
+#define _SETJMP_H
+#define __SETJMP_H
+#define __SETJMP_H__
+
+#endif /* _WASI_SHIM_SETJMP_H */
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>

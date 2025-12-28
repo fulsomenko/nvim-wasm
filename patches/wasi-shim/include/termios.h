@@ -1,6 +1,7 @@
 #pragma once
 
 #include <errno.h>
+#include <string.h>
 
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;
@@ -86,16 +87,18 @@ static inline int tcsetattr(int fd, int optional_actions, const struct termios *
   (void)fd;
   (void)optional_actions;
   (void)termios_p;
-  errno = ENOSYS;
-  return -1;
+  return 0;  // Host handles terminal mode
 }
 
 static inline int tcgetattr(int fd, struct termios *termios_p)
 {
   (void)fd;
-  (void)termios_p;
-  errno = ENOSYS;
-  return -1;
+  if (termios_p) {
+    memset(termios_p, 0, sizeof(*termios_p));
+    termios_p->c_cc[VMIN] = 1;
+    termios_p->c_cc[VTIME] = 0;
+  }
+  return 0;
 }
 
 static inline speed_t cfgetospeed(const struct termios *t)

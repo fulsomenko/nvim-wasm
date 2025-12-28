@@ -828,29 +828,38 @@ diff -ruN a/src/wasi/stub.c b/src/wasi/stub.c
 +  return 0;
 +}
 +
-+int uv_tty_init(uv_loop_t* arg0, uv_tty_t* arg1, uv_file fd, int readable) {
-+  UV__UNUSED(arg0);
-+  UV__UNUSED(arg1);
-+  UV__UNUSED(fd);
++int uv_tty_init(uv_loop_t* loop, uv_tty_t* tty, uv_file fd, int readable) {
 +  UV__UNUSED(readable);
-+  return UV_ENOSYS;
++  const char *term = getenv("TERM");
++  if (!term || !*term) {
++    return UV_ENOSYS;
++  }
++  if (tty) {
++    memset(tty, 0, sizeof(*tty));
++    tty->type = UV_TTY;
++    tty->loop = loop;
++    tty->io_watcher.fd = fd;
++  }
++  return 0;
 +}
 +
-+int uv_tty_set_mode(uv_tty_t* arg0, uv_tty_mode_t mode) {
-+  UV__UNUSED(arg0);
++int uv_tty_set_mode(uv_tty_t* tty, uv_tty_mode_t mode) {
++  UV__UNUSED(tty);
 +  UV__UNUSED(mode);
-+  return UV_ENOSYS;
++  return 0;  // Host handles raw mode
 +}
 +
 +int uv_tty_reset_mode(void) {
-+  return UV_ENOSYS;
++  return 0;
 +}
 +
-+int uv_tty_get_winsize(uv_tty_t* arg0, int* width, int* height) {
-+  UV__UNUSED(arg0);
-+  UV__UNUSED(width);
-+  UV__UNUSED(height);
-+  return UV_ENOSYS;
++int uv_tty_get_winsize(uv_tty_t* tty, int* width, int* height) {
++  UV__UNUSED(tty);
++  const char *cols = getenv("COLUMNS");
++  const char *lines = getenv("LINES");
++  *width = cols ? atoi(cols) : 80;
++  *height = lines ? atoi(lines) : 24;
++  return (*width > 0 && *height > 0) ? 0 : UV_ENOSYS;
 +}
 +
 +void uv_tty_set_vterm_state(uv_tty_vtermstate_t state) {
@@ -863,8 +872,12 @@ diff -ruN a/src/wasi/stub.c b/src/wasi/stub.c
 +}
 +
 +uv_handle_type uv_guess_handle(uv_file file) {
-+  // Treat stdio as pipes so uv_write path is used; everything else as file.
++  // Check if TERM is set for TUI mode detection
 +  if (file >= 0 && file <= 2) {
++    const char *term = getenv("TERM");
++    if (term && *term) {
++      return UV_TTY;
++    }
 +    return UV_NAMED_PIPE;
 +  }
 +  return UV_FILE;

@@ -17,8 +17,8 @@
           default = nvimWasm;
           nvim-wasm = nvimWasm;
 
-          # Asyncify variant for wasmi/interpreters without WASM exception support
-          # Uses Binaryen's asyncify transform for setjmp/longjmp via stack rewinding
+          # Asyncify variant for browsers without SharedArrayBuffer
+          # Uses Binaryen's asyncify transform for cooperative multitasking via JS event loop
           nvim-wasm-asyncify = pkgs.runCommand "nvim-wasm-asyncify" {} ''
             mkdir -p $out/bin $out/share
             cp ${nvimWasm}/bin/nvim-asyncify.wasm $out/bin/nvim.wasm

@@ -176,7 +176,7 @@ let
         cp build-host/lib/libnlua0.dylib build-host/libnlua0-host.so
       fi
 
-      echo "=== Compiling setjmp stub for wasmi compatibility ==="
+      echo "=== Compiling WASI stubs for wasmi compatibility ==="
       mkdir -p build-wasm-deps
       # Compile custom setjmp/longjmp that doesn't use WASM exceptions
       .toolchains/wasi-sdk-${wasiSdkVersion}-${wasiSdkArch}-${wasiSdkOs}/bin/clang \
@@ -184,6 +184,16 @@ let
         -mno-exception-handling \
         -c $PWD/patches/wasi-shim/setjmp_stub.c \
         -o build-wasm-deps/setjmp_stub.o
+
+      # Compile env:: stubs (uv_*, clock) that WASI/libuv don't provide
+      # This file is compiled separately to avoid header conflicts with uv.h
+      .toolchains/wasi-sdk-${wasiSdkVersion}-${wasiSdkArch}-${wasiSdkOs}/bin/clang \
+        --target=wasm32-wasi \
+        -mno-exception-handling \
+        -c $PWD/patches/wasi-shim/env_stub.c \
+        -o build-wasm-deps/env_stub.o
+
+      # Note: libc_stub.c (flock, getpid, etc.) is compiled via cmake/wasm-overrides.cmake target_sources
 
       echo "=== Building WASM dependencies ==="
       # Override WASM_EH_FLAGS to disable exception handling instructions for wasmi compatibility
@@ -193,10 +203,13 @@ let
         WASM_EH_FLAGS="-mno-exception-handling"
 
       echo "=== Building WASM Neovim ==="
-      # Link with our setjmp stub
+      # Link with our stubs for standalone WASI runtime compatibility:
+      # - setjmp_stub.o: setjmp/longjmp for asyncify
+      # - env_stub.o: uv_*, clock functions
+      # - libc_stub.c is compiled via cmake/wasm-overrides.cmake target_sources
       make wasm CMAKE=cmake CMAKE_BUILD_JOBS=$NIX_BUILD_CORES \
         WASM_EH_FLAGS="-mno-exception-handling" \
-        CMAKE_EXE_LINKER_FLAGS="$PWD/build-wasm-deps/setjmp_stub.o"
+        CMAKE_EXE_LINKER_FLAGS="$PWD/build-wasm-deps/setjmp_stub.o $PWD/build-wasm-deps/env_stub.o"
 
       echo "=== Building Asyncify variant ==="
       # Call wasm-opt directly to avoid Makefile's binaryen download

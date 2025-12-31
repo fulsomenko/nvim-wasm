@@ -27,7 +27,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [ lua5_1 curl gnutar git ];
+          packages = with pkgs; [ lua5_1 curl gnutar git wasmtime ];
         };
       }
     );

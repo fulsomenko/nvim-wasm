@@ -24,6 +24,8 @@ endif()
 function(_nvim_wasm_disable_pty)
   get_filename_component(_wrap_root "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
   set(_deps_libdir "${_wrap_root}/build-wasm-deps/usr/lib")
+  # Note: env_stub.c is compiled separately (no headers) and linked via CMAKE_EXE_LINKER_FLAGS
+  # to avoid type conflicts with uv.h and time.h
   set(_stub_srcs
     "${_wrap_root}/patches/wasi-shim/pty_stub.c"
     "${_wrap_root}/patches/wasi-shim/signal_stub.c"

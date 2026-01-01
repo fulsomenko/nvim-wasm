@@ -29,7 +29,8 @@ function(_nvim_wasm_disable_pty)
   set(_stub_srcs
     "${_wrap_root}/patches/wasi-shim/pty_stub.c"
     "${_wrap_root}/patches/wasi-shim/signal_stub.c"
-    "${_wrap_root}/patches/wasi-shim/libc_stub.c")
+    "${_wrap_root}/patches/wasi-shim/libc_stub.c"
+    "${_wrap_root}/patches/wasi-shim/server_stub.c")
   set(_asyncify_src "${_wrap_root}/patches/asyncify/asyncify_region.c")
   foreach(_stub IN LISTS _stub_srcs)
     if(NOT EXISTS "${_stub}")
@@ -42,7 +43,8 @@ function(_nvim_wasm_disable_pty)
 
   set(_remove_srcs
     "${CMAKE_SOURCE_DIR}/src/nvim/os/pty_proc_unix.c"
-    "${CMAKE_SOURCE_DIR}/src/nvim/os/signal.c")
+    "${CMAKE_SOURCE_DIR}/src/nvim/os/signal.c"
+    "${CMAKE_SOURCE_DIR}/src/nvim/msgpack_rpc/server.c")
 
   # Drop unsupported PTY sources and add our stub replacement.
   if(TARGET main_lib)

@@ -26,10 +26,10 @@ let
   # Built with WASM_EH_FLAGS="-mno-exception-handling" for wasmi compatibility
   # Asyncify handles setjmp/longjmp via stack rewinding
   outputHashes = {
-    "arm64-macos" = "sha256-nPbQDTx1phzhk0geCJjD/HjOnoHfYJxFu6UAWNgP2u8=";
-    "x86_64-macos" = lib.fakeSha256;  # TODO: compute on x86_64-macos
-    "arm64-linux" = lib.fakeSha256;   # TODO: compute on arm64-linux
-    "x86_64-linux" = lib.fakeSha256;  # TODO: compute on x86_64-linux
+    "arm64-macos" = lib.fakeHash;
+    "x86_64-macos" = lib.fakeHash;
+    "arm64-linux" = lib.fakeHash;
+    "x86_64-linux" = lib.fakeHash;
   };
 
   # WASI SDK hashes per platform
@@ -212,10 +212,11 @@ let
         CMAKE_EXE_LINKER_FLAGS="$PWD/build-wasm-deps/setjmp_stub.o $PWD/build-wasm-deps/env_stub.o"
 
       echo "=== Building Asyncify variant ==="
-      # Call wasm-opt directly to avoid Makefile's binaryen download
+      # Include env.setjmp and env.longjmp in asyncify-imports so the asyncify pass
+      # instruments their call sites for stack capture/restore (needed for Lua pcall error handling)
       ${binaryen}/bin/wasm-opt build-wasm/bin/nvim \
         --asyncify \
-        --pass-arg=asyncify-imports@wasi_snapshot_preview1.poll_oneoff \
+        --pass-arg=asyncify-imports@wasi_snapshot_preview1.poll_oneoff,env.setjmp,env.longjmp \
         -O2 --strip-debug --strip-producers \
         -o build-wasm/bin/nvim-asyncify.wasm
     '';

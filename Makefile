@@ -51,9 +51,12 @@ BINARYEN_WASM_OPT ?= $(BINARYEN_ROOT)/bin/wasm-opt
 #
 # Notes:
 # - `ASYNCIFY_IMPORTS` is a comma-separated list of `module.name` imports.
+#   env.setjmp and env.longjmp are included so asyncify instruments their
+#   call sites, enabling the host runtime to capture/restore the asyncify
+#   stack for Lua's pcall error handling (which uses setjmp/longjmp).
 # - `ASYNCIFY_ADDLIST` / `ASYNCIFY_REMOVELIST` are comma-separated wasm
 #   function names (use `make wasm-asyncify ASYNCIFY_VERBOSE=1` to inspect).
-ASYNCIFY_IMPORTS ?= wasi_snapshot_preview1.poll_oneoff
+ASYNCIFY_IMPORTS ?= wasi_snapshot_preview1.poll_oneoff,env.setjmp,env.longjmp
 ASYNCIFY_ADDLIST ?=
 ASYNCIFY_REMOVELIST ?=
 ASYNCIFY_IGNORE_INDIRECT ?= 0

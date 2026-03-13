@@ -14,6 +14,8 @@
 , llvmPackages
 , gettext
 , libiconv
+, autoPatchelfHook
+, zlib
 }:
 
 let
@@ -85,7 +87,10 @@ let
 
     src = ./..;
 
-    nativeBuildInputs = [ lua5_1 gnumake cmake curl cacert gnutar gzip git binaryen llvmPackages.clang gettext libiconv ];
+    nativeBuildInputs = [ lua5_1 gnumake cmake curl cacert gnutar gzip git binaryen llvmPackages.clang gettext libiconv ]
+      ++ lib.optionals stdenvNoCC.isLinux [ autoPatchelfHook ];
+
+    buildInputs = lib.optionals stdenvNoCC.isLinux [ zlib llvmPackages.libcxx ];
 
     # Set CC for host builds
     CC = "${llvmPackages.clang}/bin/clang";
@@ -111,6 +116,11 @@ let
       # Extract WASI SDK
       tar -C .toolchains -xzf ${wasiSdk}
       touch .toolchains/wasi-sdk-${wasiSdkVersion}-${wasiSdkArch}-${wasiSdkOs}.tar.gz
+
+      ${lib.optionalString stdenvNoCC.isLinux ''
+      # Patch WASI SDK ELF binaries to work on NixOS (pre-built binaries have wrong interpreter path)
+      autoPatchelf .toolchains/wasi-sdk-${wasiSdkVersion}-${wasiSdkArch}-${wasiSdkOs}
+      ''}
 
       # Create cmake directory structure
       mkdir -p .toolchains/cmake-3.29.6-${wasiSdkOs}-${wasiSdkArch}/bin

@@ -31,7 +31,7 @@ let
     "arm64-macos" = lib.fakeHash;
     "x86_64-macos" = lib.fakeHash;
     "arm64-linux" = lib.fakeHash;
-    "x86_64-linux" = lib.fakeHash;
+    "x86_64-linux" = "sha256-mcA8gh8DnNuE8XhFfK7xBvdxzdNfqocTSGdXfn6uV94=";
   };
 
   # WASI SDK hashes per platform

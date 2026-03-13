@@ -128,10 +128,12 @@ let
       cp -r ${neovimSrc} neovim
       chmod -R u+w neovim
 
+      ${lib.optionalString stdenvNoCC.isDarwin ''
       # Patch cmake.deps to disable macOS platform detection for WASM cross-compile
       # This prevents -arch arm64 flags from being added to WASI clang
       sed -i.bak 's/list(APPEND DEPS_CMAKE_ARGS -D CMAKE_BUILD_TYPE/list(APPEND DEPS_CMAKE_ARGS -D CMAKE_SYSTEM_NAME=Generic -D CMAKE_OSX_ARCHITECTURES= -D CMAKE_OSX_DEPLOYMENT_TARGET= -D CMAKE_BUILD_TYPE/' \
         neovim/cmake.deps/CMakeLists.txt
+      ''}
     '';
 
     buildPhase = ''
